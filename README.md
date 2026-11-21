@@ -1,4 +1,6 @@
-# Neo-Art — 7-Layer Procedural Abstract Background Studio
+# Neo-Art 🖼️
+
+<p align="center"><strong>7-Layer Procedural Abstract Background Studio.</strong></p>
 
 [![Rust](https://img.shields.io/badge/rust-2021%20edition-orange.svg?logo=rust)](https://www.rust-lang.org/)
 [![GUI](https://img.shields.io/badge/GUI-egui%200.31-blue.svg)](https://github.com/emilk/egui)
