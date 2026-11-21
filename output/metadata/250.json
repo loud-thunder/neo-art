@@ -1,0 +1,60 @@
+{
+  "name": "Neo-Art #250 — Omega Tessellation",
+  "description": "7-Layer Procedural Abstract Geometry & Cellular Mathematics NFT Collection published via Octopin and Zora.",
+  "image": "ipfs://REPLACE_WITH_OCTOPIN_IMAGES_FOLDER_CID/250.png",
+  "external_url": "https://zora.co",
+  "attributes": [
+    {
+      "trait_type": "Rarity Tier",
+      "value": "Mythic 1-of-1"
+    },
+    {
+      "trait_type": "Color Palette",
+      "value": "Plasma Opal"
+    },
+    {
+      "trait_type": "Color Harmony",
+      "value": "Split-Complementary"
+    },
+    {
+      "trait_type": "Background",
+      "value": "Deep Void"
+    },
+    {
+      "trait_type": "Cellular Substrate",
+      "value": "Fractured Relaxed Shards"
+    },
+    {
+      "trait_type": "Cellular Seed Lattice",
+      "value": "Golden Fibonacci Spiral"
+    },
+    {
+      "trait_type": "Primary Geometry",
+      "value": "Concentric Rings"
+    },
+    {
+      "trait_type": "Co-occurrence Geometry",
+      "value": "Pure Minimalist (None)"
+    },
+    {
+      "trait_type": "Proximity Field",
+      "value": "k-NN Constellation Web"
+    },
+    {
+      "trait_type": "Glitch Effect",
+      "value": "Dual Pixel Sort + Scanline Shear"
+    },
+    {
+      "trait_type": "Cellular Density",
+      "value": 43
+    },
+    {
+      "trait_type": "Co-occurrence Affinity",
+      "value": 6
+    },
+    {
+      "trait_type": "Mythic Edition",
+      "value": "Omega Tessellation"
+    }
+  ]
+}
