@@ -3,37 +3,6 @@ use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum RarityTier {
-    Common,
-    Uncommon,
-    Rare,
-    Legendary,
-    MythicOneOfOne,
-}
-
-impl RarityTier {
-    pub fn name(&self) -> &'static str {
-        match self {
-            RarityTier::Common => "Common",
-            RarityTier::Uncommon => "Uncommon",
-            RarityTier::Rare => "Rare",
-            RarityTier::Legendary => "Legendary",
-            RarityTier::MythicOneOfOne => "Mythic 1-of-1",
-        }
-    }
-
-    pub fn badge_color(&self) -> [u8; 3] {
-        match self {
-            RarityTier::Common => [150, 158, 170],
-            RarityTier::Uncommon => [46, 204, 113],
-            RarityTier::Rare => [52, 152, 219],
-            RarityTier::Legendary => [241, 196, 15],
-            RarityTier::MythicOneOfOne => [255, 64, 129],
-        }
-    }
-}
-
 /// Layer 1: Curated Algorithmic Palettes in perceptual OKLCH space
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ColorPaletteTrait {
@@ -654,13 +623,11 @@ pub struct GenomeSignature {
     pub glitch: GlitchStyle,
 }
 
-/// Complete DNA of a single NFT in the 250 collection
+/// Complete procedural DNA of a single generated background
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NftGenome {
-    pub token_id: u32,
+pub struct BackgroundGenome {
+    pub id: u32,
     pub seed: u64,
-    pub rarity_tier: RarityTier,
-    pub mythic_title: Option<String>,
     // Layer 1: Color
     pub palette: ColorPaletteTrait,
     pub harmony: HarmonyMode,
@@ -687,7 +654,7 @@ pub struct NftGenome {
     pub glitch_intensity: f32,
 }
 
-impl NftGenome {
+impl BackgroundGenome {
     pub fn signature(&self) -> GenomeSignature {
         GenomeSignature {
             palette: self.palette,
@@ -700,31 +667,6 @@ impl NftGenome {
             proximity: self.proximity,
             glitch: self.glitch,
         }
-    }
-
-    /// Computes rarity score and classifies into Common / Uncommon / Rare / Legendary / Mythic 1-of-1
-    pub fn evaluate_rarity(&mut self) {
-        if self.mythic_title.is_some() {
-            self.rarity_tier = RarityTier::MythicOneOfOne;
-            return;
-        }
-        let score = (20 - self.palette.weight())
-            + (35 - self.harmony.weight()) / 2
-            + (25 - self.background.weight())
-            + (35 - self.cellular.weight())
-            + (25 - self.primary_geom.weight())
-            + (28 - self.proximity.weight())
-            + (30 - self.glitch.weight());
-
-        self.rarity_tier = if score >= 112 {
-            RarityTier::Legendary
-        } else if score >= 94 {
-            RarityTier::Rare
-        } else if score >= 76 {
-            RarityTier::Uncommon
-        } else {
-            RarityTier::Common
-        };
     }
 }
 
@@ -741,42 +683,21 @@ fn sample_weighted<T: Copy>(rng: &mut ChaCha8Rng, items: &[T], weight_fn: impl F
     items[0]
 }
 
-/// Deterministically generates all `supply` (default 250) unique NFT genomes from a master seed.
-pub fn generate_collection(master_seed: u64, supply: u32) -> Vec<NftGenome> {
-    let mut collection = Vec::with_capacity(supply as usize);
-    let mut seen_signatures = HashSet::with_capacity(supply as usize);
+/// Deterministically generates `count` unique background genomes from a master seed.
+pub fn generate_batch(master_seed: u64, count: u32) -> Vec<BackgroundGenome> {
+    let mut batch = Vec::with_capacity(count as usize);
+    let mut seen_signatures = HashSet::with_capacity(count as usize);
 
-    for token_id in 1..=supply {
+    for id in 1..=count {
         let mut attempt = 0u64;
         loop {
-            let token_seed = master_seed
+            let item_seed = master_seed
                 .wrapping_mul(0x9E3779B97F4A7C15)
-                .wrapping_add((token_id as u64) << 16)
+                .wrapping_add((id as u64) << 16)
                 .wrapping_add(attempt);
-            let mut rng = ChaCha8Rng::seed_from_u64(token_seed);
+            let mut rng = ChaCha8Rng::seed_from_u64(item_seed);
 
-            // Special deterministic 1-of-1 Mythic editions at milestones (#1, #125, #250)
-            let mythic_title = if attempt == 0 {
-                match token_id {
-                    1 => Some("Genesis Singularity".to_string()),
-                    125 => Some("Euler's Equilibrium".to_string()),
-                    250 => Some("Omega Tessellation".to_string()),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-
-            let palette = if mythic_title.is_some() {
-                match token_id {
-                    1 => ColorPaletteTrait::ChromaticVoid,
-                    125 => ColorPaletteTrait::GoldenRatio,
-                    _ => ColorPaletteTrait::PlasmaOpal,
-                }
-            } else {
-                sample_weighted(&mut rng, ColorPaletteTrait::ALL, |x| x.weight())
-            };
-
+            let palette = sample_weighted(&mut rng, ColorPaletteTrait::ALL, |x| x.weight());
             let harmony = sample_weighted(&mut rng, HarmonyMode::ALL, |x| x.weight());
             let background = sample_weighted(&mut rng, BackgroundStyle::ALL, |x| x.weight());
             let cellular = sample_weighted(&mut rng, CellularStyle::ALL, |x| x.weight());
@@ -792,11 +713,7 @@ pub fn generate_collection(master_seed: u64, supply: u32) -> Vec<NftGenome> {
                 SecondaryGeometry::co_occurrence_weight(primary_geom, secondary_geom);
 
             let proximity = sample_weighted(&mut rng, ProximityStyle::ALL, |x| x.weight());
-            let glitch = if mythic_title.is_some() {
-                GlitchStyle::DualSortAndScanlineShear
-            } else {
-                sample_weighted(&mut rng, GlitchStyle::ALL, |x| x.weight())
-            };
+            let glitch = sample_weighted(&mut rng, GlitchStyle::ALL, |x| x.weight());
 
             let cell_count = match cellular {
                 CellularStyle::WorleyDistanceRidges => rng.gen_range(16..=32),
@@ -810,11 +727,9 @@ pub fn generate_collection(master_seed: u64, supply: u32) -> Vec<NftGenome> {
                 _ => rng.gen_range(0..=2),
             };
 
-            let mut genome = NftGenome {
-                token_id,
-                seed: token_seed,
-                rarity_tier: RarityTier::Common,
-                mythic_title,
+            let genome = BackgroundGenome {
+                id,
+                seed: item_seed,
                 palette,
                 harmony,
                 hue_jitter: rng.gen_range(-8.0..8.0),
@@ -837,15 +752,14 @@ pub fn generate_collection(master_seed: u64, supply: u32) -> Vec<NftGenome> {
                 },
             };
 
-            genome.evaluate_rarity();
             let sig = genome.signature();
             if seen_signatures.insert(sig) {
-                collection.push(genome);
+                batch.push(genome);
                 break;
             }
             attempt += 1;
         }
     }
 
-    collection
+    batch
 }

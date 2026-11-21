@@ -1,5 +1,5 @@
-use crate::genome::NftGenome;
-use crate::renderer::{render_nft, LayerVisibility};
+use crate::genome::BackgroundGenome;
+use crate::renderer::{render_background, LayerVisibility};
 use image::{ImageBuffer, Rgba};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -8,203 +8,122 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionConfig {
-    pub collection_name: String,
-    pub description: String,
-    pub external_url: String,
-    pub images_cid: String,
-    pub export_resolution: u32,
-    pub output_dir: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AspectRatioPreset {
+    Landscape16x9_4K,
+    Landscape16x9_1080p,
+    Mobile9x16Story,
+    Ultrawide21x9,
+    Square1x1,
+    Classic4x3,
+    Custom,
 }
 
-impl Default for CollectionConfig {
+impl AspectRatioPreset {
+    pub const ALL: &'static [Self] = &[
+        Self::Landscape16x9_4K,
+        Self::Landscape16x9_1080p,
+        Self::Mobile9x16Story,
+        Self::Ultrawide21x9,
+        Self::Square1x1,
+        Self::Classic4x3,
+        Self::Custom,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Landscape16x9_4K => "16:9 4K UHD (3840×2160)",
+            Self::Landscape16x9_1080p => "16:9 1080p FHD (1920×1080)",
+            Self::Mobile9x16Story => "9:16 Mobile / Story (1080×1920)",
+            Self::Ultrawide21x9 => "21:9 Ultrawide (3440×1440)",
+            Self::Square1x1 => "1:1 Square (2048×2048)",
+            Self::Classic4x3 => "4:3 Classic (1600×1200)",
+            Self::Custom => "Custom Resolution",
+        }
+    }
+
+    pub fn dimensions(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Landscape16x9_4K => Some((3840, 2160)),
+            Self::Landscape16x9_1080p => Some((1920, 1080)),
+            Self::Mobile9x16Story => Some((1080, 1920)),
+            Self::Ultrawide21x9 => Some((3440, 1440)),
+            Self::Square1x1 => Some((2048, 2048)),
+            Self::Classic4x3 => Some((1600, 1200)),
+            Self::Custom => None,
+        }
+    }
+
+    pub fn from_dimensions(w: u32, h: u32) -> Self {
+        for &preset in Self::ALL {
+            if preset.dimensions() == Some((w, h)) {
+                return preset;
+            }
+        }
+        Self::Custom
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportConfig {
+    pub width: u32,
+    pub height: u32,
+    pub preset: AspectRatioPreset,
+    pub output_dir: String,
+    pub filename_prefix: String,
+}
+
+impl Default for ExportConfig {
     fn default() -> Self {
         Self {
-            collection_name: "Neo-Art".to_string(),
-            description: "7-Layer Procedural Abstract Geometry & Cellular Mathematics NFT Collection published via Octopin and Zora.".to_string(),
-            external_url: "https://zora.co".to_string(),
-            images_cid: "REPLACE_WITH_OCTOPIN_IMAGES_FOLDER_CID".to_string(),
-            export_resolution: 2000,
+            width: 3840,
+            height: 2160,
+            preset: AspectRatioPreset::Landscape16x9_4K,
             output_dir: "output".to_string(),
+            filename_prefix: "background".to_string(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NftAttribute {
-    pub trait_type: String,
-    pub value: serde_json::Value,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Erc721Metadata {
-    pub name: String,
-    pub description: String,
-    pub image: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub external_url: String,
-    pub attributes: Vec<NftAttribute>,
-}
-
-pub fn build_erc721_metadata(genome: &NftGenome, config: &CollectionConfig) -> Erc721Metadata {
-    let cid_clean = config
-        .images_cid
-        .trim()
-        .trim_start_matches("ipfs://")
-        .trim_end_matches('/');
-
-    let image_uri = format!("ipfs://{}/{}.png", cid_clean, genome.token_id);
-
-    let name = if let Some(ref title) = genome.mythic_title {
-        format!("{} #{} — {}", config.collection_name, genome.token_id, title)
-    } else {
-        format!("{} #{}", config.collection_name, genome.token_id)
-    };
-
-    let mut attributes = vec![
-        NftAttribute {
-            trait_type: "Rarity Tier".to_string(),
-            value: serde_json::Value::String(genome.rarity_tier.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Color Palette".to_string(),
-            value: serde_json::Value::String(genome.palette.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Color Harmony".to_string(),
-            value: serde_json::Value::String(genome.harmony.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Background".to_string(),
-            value: serde_json::Value::String(genome.background.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Cellular Substrate".to_string(),
-            value: serde_json::Value::String(genome.cellular.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Cellular Seed Lattice".to_string(),
-            value: serde_json::Value::String(genome.seed_distribution.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Primary Geometry".to_string(),
-            value: serde_json::Value::String(genome.primary_geom.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Co-occurrence Geometry".to_string(),
-            value: serde_json::Value::String(genome.secondary_geom.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Proximity Field".to_string(),
-            value: serde_json::Value::String(genome.proximity.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Glitch Effect".to_string(),
-            value: serde_json::Value::String(genome.glitch.name().to_string()),
-        },
-        NftAttribute {
-            trait_type: "Cellular Density".to_string(),
-            value: serde_json::json!(genome.cell_count),
-        },
-        NftAttribute {
-            trait_type: "Co-occurrence Affinity".to_string(),
-            value: serde_json::json!(genome.co_occurrence_affinity),
-        },
-    ];
-
-    if let Some(ref title) = genome.mythic_title {
-        attributes.push(NftAttribute {
-            trait_type: "Mythic Edition".to_string(),
-            value: serde_json::Value::String(title.clone()),
-        });
-    }
-
-    Erc721Metadata {
-        name,
-        description: config.description.clone(),
-        image: image_uri,
-        external_url: config.external_url.clone(),
-        attributes,
-    }
-}
-
-/// Exports a single NFT image + JSON metadata to disk
-pub fn export_single_nft(
-    genome: &NftGenome,
-    config: &CollectionConfig,
+/// Exports a single background image to disk as a high-resolution PNG
+pub fn export_single_background(
+    genome: &BackgroundGenome,
+    config: &ExportConfig,
     vis: LayerVisibility,
-) -> Result<(PathBuf, PathBuf), String> {
-    let base = Path::new(&config.output_dir);
-    let images_dir = base.join("images");
-    let metadata_dir = base.join("metadata");
+) -> Result<PathBuf, String> {
+    let out_dir = Path::new(&config.output_dir);
+    fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
 
-    fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&metadata_dir).map_err(|e| e.to_string())?;
-
-    let size = config.export_resolution;
-    let rgba = render_nft(genome, size, vis);
+    let rgba = render_background(genome, config.width, config.height, vis);
     let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(size, size, rgba).ok_or("Failed to construct image buffer")?;
+        ImageBuffer::from_raw(config.width, config.height, rgba)
+            .ok_or("Failed to construct image buffer")?;
 
-    let img_path = images_dir.join(format!("{}.png", genome.token_id));
+    let img_path = out_dir.join(format!("{}_{:03}.png", config.filename_prefix, genome.id));
     img.save(&img_path).map_err(|e| e.to_string())?;
 
-    let meta = build_erc721_metadata(genome, config);
-    let json_str = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-    let meta_path = metadata_dir.join(format!("{}.json", genome.token_id));
-    fs::write(&meta_path, json_str).map_err(|e| e.to_string())?;
-
-    Ok((img_path, meta_path))
+    Ok(img_path)
 }
 
-/// Multi-threaded batch export of all 250 NFTs (PNGs + ERC-721 JSONs + collection manifest)
-pub fn export_batch_collection(
-    collection: &[NftGenome],
-    config: &CollectionConfig,
+/// Multi-threaded batch export of backgrounds to high-resolution PNGs
+pub fn export_batch_backgrounds(
+    batch: &[BackgroundGenome],
+    config: &ExportConfig,
     progress_counter: Arc<AtomicUsize>,
 ) -> Result<(), String> {
-    let base = Path::new(&config.output_dir);
-    let images_dir = base.join("images");
-    let metadata_dir = base.join("metadata");
-
-    fs::create_dir_all(&images_dir).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&metadata_dir).map_err(|e| e.to_string())?;
+    let out_dir = Path::new(&config.output_dir);
+    fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
 
     let vis = LayerVisibility::default();
 
-    collection
+    batch
         .par_iter()
         .try_for_each(|genome| -> Result<(), String> {
-            export_single_nft(genome, config, vis)?;
+            export_single_background(genome, config, vis)?;
             progress_counter.fetch_add(1, Ordering::Relaxed);
             Ok(())
         })?;
 
-    // Write full collection manifest
-    let manifest_path = base.join("collection_manifest.json");
-    let manifest_json = serde_json::to_string_pretty(collection).map_err(|e| e.to_string())?;
-    fs::write(manifest_path, manifest_json).map_err(|e| e.to_string())?;
-
     Ok(())
-}
-
-/// Fast Octopin CID stamper: updates all 250 metadata JSON files with `ipfs://<IMAGES_CID>/<id>.png`
-/// without needing to re-render the 2000x2000 PNGs.
-pub fn stamp_octopin_cid_on_metadata(
-    collection: &[NftGenome],
-    config: &CollectionConfig,
-) -> Result<usize, String> {
-    let base = Path::new(&config.output_dir);
-    let metadata_dir = base.join("metadata");
-    fs::create_dir_all(&metadata_dir).map_err(|e| e.to_string())?;
-
-    for genome in collection {
-        let meta = build_erc721_metadata(genome, config);
-        let json_str = serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?;
-        let meta_path = metadata_dir.join(format!("{}.json", genome.token_id));
-        fs::write(&meta_path, json_str).map_err(|e| e.to_string())?;
-    }
-
-    Ok(collection.len())
 }

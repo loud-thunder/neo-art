@@ -1,7 +1,7 @@
 use crate::cellular::{CellularSubstrate, Point2D, VoronoiCell};
 use crate::genome::{
-    BackgroundStyle, CellularStyle, NftGenome, PrimaryGeometry, ProximityStyle, ResolvedPalette,
-    SecondaryGeometry,
+    BackgroundGenome, BackgroundStyle, CellularStyle, PrimaryGeometry, ProximityStyle,
+    ResolvedPalette, SecondaryGeometry,
 };
 use crate::glitch::apply_glitch_layer;
 use noise::{NoiseFn, Perlin};
@@ -71,10 +71,19 @@ fn grayscale_palette() -> ResolvedPalette {
     }
 }
 
-/// Renders an NFT genome at arbitrary resolution (`size x size`) into an RGBA8 buffer.
-pub fn render_nft(genome: &NftGenome, size: u32, vis: LayerVisibility) -> Vec<u8> {
-    let mut pixmap = Pixmap::new(size, size).expect("Valid canvas dimensions");
-    let s = size as f32;
+/// Renders a procedural background at arbitrary resolution (`width x height`) into an RGBA8 buffer.
+/// Isotropically scales shapes and coordinates to keep geometry undistorted.
+pub fn render_background(
+    genome: &BackgroundGenome,
+    width: u32,
+    height: u32,
+    vis: LayerVisibility,
+) -> Vec<u8> {
+    let mut pixmap = Pixmap::new(width, height).expect("Valid canvas dimensions");
+    let w = width as f32;
+    let h = height as f32;
+    let s = w.min(h);
+    let aspect_ratio = w / h;
 
     // Layer 1: Color System Resolution
     let pal = if vis.layer1_color_override {
@@ -85,17 +94,18 @@ pub fn render_nft(genome: &NftGenome, size: u32, vis: LayerVisibility) -> Vec<u8
 
     // Layer 2: Background Field
     if vis.layer2_background {
-        render_layer2_background(&mut pixmap, s, genome, &pal);
+        render_layer2_background(&mut pixmap, w, h, s, genome, &pal);
     } else {
         pixmap.fill(skia_color(pal.bg_primary, 1.0));
     }
 
-    // Compute Cellular Math Substrate (shared by Layers 3, 4, 5, 6)
+    // Compute Cellular Math Substrate with isotropic aspect ratio
     let substrate = CellularSubstrate::generate(
         genome.seed,
         genome.cell_count,
         genome.seed_distribution,
         genome.lloyd_relaxation_steps,
+        aspect_ratio,
     );
 
     // Layer 3: Cellular Math Substrate
@@ -122,10 +132,10 @@ pub fn render_nft(genome: &NftGenome, size: u32, vis: LayerVisibility) -> Vec<u8
     }
 
     // Framing subtle border
-    render_subtle_frame(&mut pixmap, s, &pal);
+    render_subtle_frame(&mut pixmap, w, h, &pal);
 
     // Convert premultiplied tiny-skia pixels to straight RGBA8
-    let mut out = vec![0u8; (size * size * 4) as usize];
+    let mut out = vec![0u8; (width * height * 4) as usize];
     for (i, px) in pixmap.pixels().iter().enumerate() {
         let c = px.demultiply();
         let idx = i * 4;
@@ -139,8 +149,8 @@ pub fn render_nft(genome: &NftGenome, size: u32, vis: LayerVisibility) -> Vec<u8
     if vis.layer7_glitch {
         apply_glitch_layer(
             &mut out,
-            size,
-            size,
+            width,
+            height,
             genome.glitch,
             genome.glitch_intensity,
             genome.seed,
@@ -152,19 +162,22 @@ pub fn render_nft(genome: &NftGenome, size: u32, vis: LayerVisibility) -> Vec<u8
 
 fn render_layer2_background(
     pixmap: &mut Pixmap,
+    w: f32,
+    h: f32,
     s: f32,
-    genome: &NftGenome,
+    genome: &BackgroundGenome,
     pal: &ResolvedPalette,
 ) {
     pixmap.fill(skia_color(pal.bg_primary, 1.0));
 
     match genome.background {
         BackgroundStyle::DeepVoid => {
-            // Subtle vignette radial gradient
+            // Subtle vignette radial gradient spanning canvas diagonal
+            let diag = w.hypot(h);
             if let Some(shader) = RadialGradient::new(
-                Point::from_xy(s * 0.5, s * 0.5),
-                Point::from_xy(s * 0.5, s * 0.5),
-                s * 0.72,
+                Point::from_xy(w * 0.5, h * 0.5),
+                Point::from_xy(w * 0.5, h * 0.5),
+                diag * 0.65,
                 vec![
                     GradientStop::new(0.0, skia_color(pal.bg_secondary, 0.55)),
                     GradientStop::new(1.0, skia_color(pal.bg_primary, 1.0)),
@@ -174,16 +187,17 @@ fn render_layer2_background(
             ) {
                 let mut paint = Paint::default();
                 paint.shader = shader;
-                if let Some(rect) = Rect::from_xywh(0.0, 0.0, s, s) {
+                if let Some(rect) = Rect::from_xywh(0.0, 0.0, w, h) {
                     pixmap.fill_rect(rect, &paint, Transform::identity(), None);
                 }
             }
         }
         BackgroundStyle::RadialNebulaGradient => {
+            let diag = w.hypot(h);
             if let Some(shader) = RadialGradient::new(
-                Point::from_xy(s * 0.42, s * 0.38),
-                Point::from_xy(s * 0.5, s * 0.5),
-                s * 0.78,
+                Point::from_xy(w * 0.42, h * 0.38),
+                Point::from_xy(w * 0.5, h * 0.5),
+                diag * 0.70,
                 vec![
                     GradientStop::new(0.0, skia_color(pal.cell_tones[0], 0.45)),
                     GradientStop::new(0.55, skia_color(pal.bg_secondary, 0.85)),
@@ -194,7 +208,7 @@ fn render_layer2_background(
             ) {
                 let mut paint = Paint::default();
                 paint.shader = shader;
-                if let Some(rect) = Rect::from_xywh(0.0, 0.0, s, s) {
+                if let Some(rect) = Rect::from_xywh(0.0, 0.0, w, h) {
                     pixmap.fill_rect(rect, &paint, Transform::identity(), None);
                 }
             }
@@ -202,7 +216,7 @@ fn render_layer2_background(
         BackgroundStyle::LinearHorizon => {
             if let Some(shader) = LinearGradient::new(
                 Point::from_xy(0.0, 0.0),
-                Point::from_xy(0.0, s),
+                Point::from_xy(0.0, h),
                 vec![
                     GradientStop::new(0.0, skia_color(pal.bg_secondary, 1.0)),
                     GradientStop::new(0.55, skia_color(pal.bg_primary, 1.0)),
@@ -213,7 +227,7 @@ fn render_layer2_background(
             ) {
                 let mut paint = Paint::default();
                 paint.shader = shader;
-                if let Some(rect) = Rect::from_xywh(0.0, 0.0, s, s) {
+                if let Some(rect) = Rect::from_xywh(0.0, 0.0, w, h) {
                     pixmap.fill_rect(rect, &paint, Transform::identity(), None);
                 }
             }
@@ -226,14 +240,19 @@ fn render_layer2_background(
             let mut stroke = Stroke::default();
             stroke.width = (s * 0.0012).max(1.0);
 
-            let divisions = 24;
+            let grid_size = s / 24.0;
             let mut pb = PathBuilder::new();
-            for i in 1..divisions {
-                let t = (i as f32 / divisions as f32) * s;
-                pb.move_to(t, 0.0);
-                pb.line_to(t, s);
-                pb.move_to(0.0, t);
-                pb.line_to(s, t);
+            let mut x = grid_size;
+            while x < w {
+                pb.move_to(x, 0.0);
+                pb.line_to(x, h);
+                x += grid_size;
+            }
+            let mut y = grid_size;
+            while y < h {
+                pb.move_to(0.0, y);
+                pb.line_to(w, y);
+                y += grid_size;
             }
             if let Some(path) = pb.finish() {
                 pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
@@ -241,19 +260,23 @@ fn render_layer2_background(
         }
         BackgroundStyle::QuantizedNoiseField => {
             let perlin = Perlin::new((genome.seed & 0xFFFF_FFFF) as u32);
-            let grid = 32usize;
-            let cell_w = s / grid as f32;
+            let cell_size = (s / 32.0).max(4.0);
+            let cols = (w / cell_size).ceil() as usize;
+            let rows = (h / cell_size).ceil() as usize;
             let mut paint = Paint::default();
-            for gy in 0..grid {
-                for gx in 0..grid {
-                    let u = gx as f64 / grid as f64;
-                    let v = gy as f64 / grid as f64;
+            for gy in 0..rows {
+                for gx in 0..cols {
+                    let u = (gx as f64 * cell_size as f64) / w as f64;
+                    let v = (gy as f64 * cell_size as f64) / h as f64;
                     let n = (perlin.get([u * 3.8, v * 3.8, 0.5]) + 1.0) * 0.5;
                     let tone_idx = ((n * 4.99) as usize).min(4);
                     paint.set_color(skia_color(pal.cell_tones[tone_idx], 0.15));
-                    if let Some(rect) =
-                        Rect::from_xywh(gx as f32 * cell_w, gy as f32 * cell_w, cell_w + 0.5, cell_w + 0.5)
-                    {
+                    if let Some(rect) = Rect::from_xywh(
+                        gx as f32 * cell_size,
+                        gy as f32 * cell_size,
+                        cell_size + 0.5,
+                        cell_size + 0.5,
+                    ) {
                         pixmap.fill_rect(rect, &paint, Transform::identity(), None);
                     }
                 }
@@ -262,8 +285,8 @@ fn render_layer2_background(
         BackgroundStyle::DualToneDiagonal => {
             let mut pb = PathBuilder::new();
             pb.move_to(0.0, 0.0);
-            pb.line_to(s, 0.0);
-            pb.line_to(0.0, s);
+            pb.line_to(w, 0.0);
+            pb.line_to(0.0, h);
             pb.close();
             if let Some(path) = pb.finish() {
                 let mut paint = Paint::default();
@@ -277,13 +300,14 @@ fn render_layer2_background(
             paint.anti_alias = true;
             let mut stroke = Stroke::default();
             stroke.width = (s * 0.002).max(1.0);
+            let diag = w.hypot(h);
             for r_idx in 1..=14 {
-                let rad = (r_idx as f32 / 15.0) * s * 0.68;
+                let rad = (r_idx as f32 / 15.0) * diag * 0.55;
                 paint.set_color(skia_color(
                     pal.cell_tones[r_idx % 5],
                     0.18 + (r_idx as f32 * 0.01),
                 ));
-                if let Some(path) = build_circle_path(s * 0.5, s * 0.5, rad) {
+                if let Some(path) = build_circle_path(w * 0.5, h * 0.5, rad) {
                     pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
                 }
             }
@@ -294,7 +318,7 @@ fn render_layer2_background(
 fn render_layer3_cellular(
     pixmap: &mut Pixmap,
     s: f32,
-    genome: &NftGenome,
+    genome: &BackgroundGenome,
     pal: &ResolvedPalette,
     substrate: &CellularSubstrate,
 ) {
@@ -463,14 +487,16 @@ fn draw_worley_ridges(
     pal: &ResolvedPalette,
     substrate: &CellularSubstrate,
 ) {
-    let grid_res = 96usize;
-    let step = s / grid_res as f32;
+    let grid_res = 96.0;
+    let step = s / grid_res;
+    let cols = (substrate.bound_x * grid_res).ceil() as usize;
+    let rows = (substrate.bound_y * grid_res).ceil() as usize;
     let mut paint = Paint::default();
 
-    for gy in 0..grid_res {
-        let v = (gy as f32 + 0.5) / grid_res as f32;
-        for gx in 0..grid_res {
-            let u = (gx as f32 + 0.5) / grid_res as f32;
+    for gy in 0..rows {
+        let v = (gy as f32 + 0.5) / grid_res;
+        for gx in 0..cols {
+            let u = (gx as f32 + 0.5) / grid_res;
             let (d1, d2, idx) = substrate.worley_at(u, v);
             let ridge = (d2 - d1).clamp(0.0, 0.18) / 0.18;
             // Quantize into contour bands
@@ -488,7 +514,7 @@ fn draw_worley_ridges(
 }
 
 fn select_geometry_anchors(
-    genome: &NftGenome,
+    genome: &BackgroundGenome,
     pal: &ResolvedPalette,
     substrate: &CellularSubstrate,
 ) -> Vec<GeometryAnchor> {
@@ -532,7 +558,7 @@ fn select_geometry_anchors(
 fn render_layer4_primary_geometry(
     pixmap: &mut Pixmap,
     s: f32,
-    genome: &NftGenome,
+    genome: &BackgroundGenome,
     pal: &ResolvedPalette,
     _substrate: &CellularSubstrate,
     anchors: &[GeometryAnchor],
@@ -787,7 +813,7 @@ fn render_layer4_primary_geometry(
 fn render_layer5_co_occurrence(
     pixmap: &mut Pixmap,
     s: f32,
-    genome: &NftGenome,
+    genome: &BackgroundGenome,
     pal: &ResolvedPalette,
     substrate: &CellularSubstrate,
     anchors: &[GeometryAnchor],
@@ -979,7 +1005,7 @@ fn render_layer5_co_occurrence(
 fn render_layer6_proximity(
     pixmap: &mut Pixmap,
     s: f32,
-    genome: &NftGenome,
+    genome: &BackgroundGenome,
     pal: &ResolvedPalette,
     _substrate: &CellularSubstrate,
     anchors: &[GeometryAnchor],
@@ -1187,13 +1213,14 @@ fn render_layer6_proximity(
     }
 }
 
-fn render_subtle_frame(pixmap: &mut Pixmap, s: f32, pal: &ResolvedPalette) {
+fn render_subtle_frame(pixmap: &mut Pixmap, w: f32, h: f32, pal: &ResolvedPalette) {
+    let s = w.min(h);
     let margin = s * 0.025;
     let mut pb = PathBuilder::new();
     pb.move_to(margin, margin);
-    pb.line_to(s - margin, margin);
-    pb.line_to(s - margin, s - margin);
-    pb.line_to(margin, s - margin);
+    pb.line_to(w - margin, margin);
+    pb.line_to(w - margin, h - margin);
+    pb.line_to(margin, h - margin);
     pb.close();
 
     if let Some(path) = pb.finish() {

@@ -41,6 +41,8 @@ pub struct CellularSubstrate {
     pub cells: Vec<VoronoiCell>,
     pub delaunay_edges: Vec<(usize, usize)>,
     pub delaunay_triangles: Vec<(usize, usize, usize)>,
+    pub bound_x: f32,
+    pub bound_y: f32,
 }
 
 impl CellularSubstrate {
@@ -49,19 +51,35 @@ impl CellularSubstrate {
         count: usize,
         distribution: SeedDistribution,
         relaxation_steps: u8,
+        aspect_ratio: f32,
     ) -> Self {
+        let ar = if aspect_ratio.is_finite() && aspect_ratio > 0.05 {
+            aspect_ratio
+        } else {
+            1.0
+        };
+        let (bound_x, bound_y) = if ar >= 1.0 {
+            (ar, 1.0)
+        } else {
+            (1.0, 1.0 / ar)
+        };
         let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA5A5_5A5A_F0F0_0F0F);
-        let n = count.clamp(8, 96);
-        let mut sites = generate_initial_sites(&mut rng, n, distribution);
+        // Density factor keeps cell count visually balanced across ultrawide or tall canvases
+        let density_factor = (bound_x * bound_y).sqrt().clamp(0.8, 1.8);
+        let n = ((count as f32) * density_factor).round().clamp(8.0, 128.0) as usize;
+        let mut sites = generate_initial_sites(&mut rng, n, distribution, bound_x, bound_y);
 
         let mut cells = Vec::new();
+        let margin = 0.035;
         for step in 0..=relaxation_steps {
-            cells = compute_voronoi_cells(&sites);
+            cells = compute_voronoi_cells(&sites, bound_x, bound_y);
             if step < relaxation_steps {
                 for (i, cell) in cells.iter().enumerate() {
                     // Move site toward cell centroid (damped to keep inside margins)
-                    sites[i].x = (sites[i].x * 0.25 + cell.centroid.x * 0.75).clamp(0.04, 0.96);
-                    sites[i].y = (sites[i].y * 0.25 + cell.centroid.y * 0.75).clamp(0.04, 0.96);
+                    sites[i].x = (sites[i].x * 0.25 + cell.centroid.x * 0.75)
+                        .clamp(margin + 0.005, bound_x - margin - 0.005);
+                    sites[i].y = (sites[i].y * 0.25 + cell.centroid.y * 0.75)
+                        .clamp(margin + 0.005, bound_y - margin - 0.005);
                 }
             }
         }
@@ -88,6 +106,8 @@ impl CellularSubstrate {
             cells,
             delaunay_edges,
             delaunay_triangles,
+            bound_x,
+            bound_y,
         }
     }
 
@@ -116,22 +136,29 @@ fn generate_initial_sites(
     rng: &mut ChaCha8Rng,
     n: usize,
     distribution: SeedDistribution,
+    bound_x: f32,
+    bound_y: f32,
 ) -> Vec<Point2D> {
     let mut sites = Vec::with_capacity(n);
+    let margin = 0.04;
+    let min_dim = bound_x.min(bound_y);
+    let cx = bound_x * 0.5;
+    let cy = bound_y * 0.5;
+
     match distribution {
         SeedDistribution::JitteredGrid => {
-            let cols = (n as f32).sqrt().ceil() as usize;
-            let rows = (n + cols - 1) / cols;
+            let cols = ((n as f32 * bound_x / bound_y).sqrt()).ceil().max(1.0) as usize;
+            let rows = ((n + cols - 1) / cols).max(1);
             for idx in 0..n {
                 let r = idx / cols;
                 let c = idx % cols;
-                let base_x = (c as f32 + 0.5) / cols as f32;
-                let base_y = (r as f32 + 0.5) / rows as f32;
-                let jx = rng.gen_range(-0.38..0.38) / cols as f32;
-                let jy = rng.gen_range(-0.38..0.38) / rows as f32;
+                let base_x = (c as f32 + 0.5) / cols as f32 * bound_x;
+                let base_y = (r as f32 + 0.5) / rows as f32 * bound_y;
+                let jx = rng.gen_range(-0.38..0.38) / cols as f32 * bound_x;
+                let jy = rng.gen_range(-0.38..0.38) / rows as f32 * bound_y;
                 sites.push(Point2D::new(
-                    (base_x + jx).clamp(0.05, 0.95),
-                    (base_y + jy).clamp(0.05, 0.95),
+                    (base_x + jx).clamp(margin, bound_x - margin),
+                    (base_y + jy).clamp(margin, bound_y - margin),
                 ));
             }
         }
@@ -140,10 +167,10 @@ fn generate_initial_sites(
             let phase = rng.gen_range(0.0..TAU);
             for i in 0..n {
                 let t = (i as f32 + 0.5) / n as f32;
-                let radius = 0.06 + 0.40 * t.sqrt();
+                let radius = (0.06 + 0.40 * t.sqrt()) * min_dim;
                 let theta = i as f32 * golden_angle + phase + rng.gen_range(-0.08..0.08);
-                let x = (0.5 + radius * theta.cos()).clamp(0.05, 0.95);
-                let y = (0.5 + radius * theta.sin()).clamp(0.05, 0.95);
+                let x = (cx + radius * theta.cos()).clamp(margin, bound_x - margin);
+                let y = (cy + radius * theta.sin()).clamp(margin, bound_y - margin);
                 sites.push(Point2D::new(x, y));
             }
         }
@@ -152,17 +179,17 @@ fn generate_initial_sites(
             let mut centers = Vec::with_capacity(num_clusters);
             for _ in 0..num_clusters {
                 centers.push(Point2D::new(
-                    rng.gen_range(0.18..0.82),
-                    rng.gen_range(0.18..0.82),
+                    rng.gen_range(0.18 * bound_x..0.82 * bound_x),
+                    rng.gen_range(0.18 * bound_y..0.82 * bound_y),
                 ));
             }
             for i in 0..n {
                 let c = centers[i % num_clusters];
                 let angle = rng.gen_range(0.0..TAU);
-                let rad = rng.gen_range(0.03..0.24);
+                let rad = rng.gen_range(0.03..0.24) * min_dim;
                 sites.push(Point2D::new(
-                    (c.x + rad * angle.cos()).clamp(0.05, 0.95),
-                    (c.y + rad * angle.sin()).clamp(0.05, 0.95),
+                    (c.x + rad * angle.cos()).clamp(margin, bound_x - margin),
+                    (c.y + rad * angle.sin()).clamp(margin, bound_y - margin),
                 ));
             }
         }
@@ -170,12 +197,12 @@ fn generate_initial_sites(
             let rings = 3usize;
             for i in 0..n {
                 let ring_idx = (i % rings) + 1;
-                let r = (ring_idx as f32 / (rings as f32 + 0.4)) * 0.43;
+                let r = (ring_idx as f32 / (rings as f32 + 0.4)) * 0.43 * min_dim;
                 let theta = (i as f32 / n as f32) * TAU * (ring_idx as f32)
                     + rng.gen_range(-0.12..0.12);
                 sites.push(Point2D::new(
-                    (0.5 + r * theta.cos()).clamp(0.05, 0.95),
-                    (0.5 + r * theta.sin()).clamp(0.05, 0.95),
+                    (cx + r * theta.cos()).clamp(margin, bound_x - margin),
+                    (cy + r * theta.sin()).clamp(margin, bound_y - margin),
                 ));
             }
         }
@@ -183,14 +210,14 @@ fn generate_initial_sites(
     sites
 }
 
-/// Computes exact 2D Voronoi cells inside `[0.03, 0.97]^2` via Sutherland-Hodgman half-plane clipping
-fn compute_voronoi_cells(sites: &[Point2D]) -> Vec<VoronoiCell> {
+/// Computes exact 2D Voronoi cells inside `[margin, bound - margin]` via Sutherland-Hodgman half-plane clipping
+fn compute_voronoi_cells(sites: &[Point2D], bound_x: f32, bound_y: f32) -> Vec<VoronoiCell> {
     let margin = 0.035;
     let base_box = vec![
         Point2D::new(margin, margin),
-        Point2D::new(1.0 - margin, margin),
-        Point2D::new(1.0 - margin, 1.0 - margin),
-        Point2D::new(margin, 1.0 - margin),
+        Point2D::new(bound_x - margin, margin),
+        Point2D::new(bound_x - margin, bound_y - margin),
+        Point2D::new(margin, bound_y - margin),
     ];
 
     let mut cells = Vec::with_capacity(sites.len());
