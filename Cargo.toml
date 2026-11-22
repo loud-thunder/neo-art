@@ -1,6 +1,6 @@
 [package]
 name = "neo-art"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "7-Layer Procedural Abstract Background & Wallpaper Studio with Adjustable Aspect Ratios and Batch Export"
 

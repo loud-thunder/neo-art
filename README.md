@@ -243,12 +243,12 @@ Portrait (9:16)               Square (1:1)               Ultrawide (21:9)
 +-------------+             +---------------+             +---------------------------+
 ```
 
-$$\text{bound}_x = \begin{cases} \text{aspect\_ratio}, & \text{if } \text{aspect\_ratio} \ge 1.0 \\ 1.0, & \text{otherwise} \end{cases}, \quad
-\text{bound}_y = \begin{cases} 1.0, & \text{if } \text{aspect\_ratio} \ge 1.0 \\ \frac{1.0}{\text{aspect\_ratio}}, & \text{otherwise} \end{cases}$$
+$$\text{bound}_x = \begin{cases} \text{AR}, & \text{if } \text{AR} \ge 1.0 \\ 1.0, & \text{otherwise} \end{cases}, \qquad
+\text{bound}_y = \begin{cases} 1.0, & \text{if } \text{AR} \ge 1.0 \\ \frac{1}{\text{AR}}, & \text{otherwise} \end{cases} \quad \left(\text{where } \text{AR} = \frac{\text{width}}{\text{height}}\right)$$
 
 The density of Voronoi seed sites scales automatically with canvas surface area:
 
-$$N_{\text{cells}} = \operatorname{clamp}\left(\operatorname{round}\left(N_{\text{base}} \cdot \sqrt{\text{bound}_x \cdot \text{bound}_y}\right), \; 8, \; 128\right)$$
+$$N_{\text{cells}} = \text{clamp}\left(\text{round}\left(N_{\text{base}} \cdot \sqrt{\text{bound}_x \cdot \text{bound}_y}\right), \; 8, \; 128\right)$$
 
 Circles stay true circles, line stroke weights remain physically calibrated, and negative space is preserved seamlessly across 4K UHD, Mobile Stories, and Ultrawide displays.
 
